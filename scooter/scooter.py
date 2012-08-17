@@ -266,4 +266,5 @@ def do_build(op):
         sys.exit(1)
 
 t = tuple
+def tt(*things): return tuple(things)
 
