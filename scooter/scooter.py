@@ -180,7 +180,7 @@ class Build:
             if self.cache[cmd].is_up2date:
                 self.cache[cmd].touch()
                 return self.cache[cmd].result
-        res, acc = treewatcher.run_watch_files(cmd, map(str, self.watchdirs))
+        res, acc = treewatcher.run_watching_files(cmd, map(str, self.watchdirs))
         touched = t(acc.created) + t(acc.deleted) + t(acc.accessed) + t(acc.modified)
         self.cache[cmd] = CacheEntry(cmd, res, touched)
         if len(self.cache) > self.cache_size*2:
