@@ -148,6 +148,7 @@ def run(cmd, echo=True, verbose=False, env={}):
         print('\033[34m' + abbrev(cmd) + '\033[0m') # ]]
     elif echo:
         print('\033[34m' + str(cmd) + '\033[0m') # ]]
+    sys.stdout.flush()
     code = Popen(map(str, cmd), env=full_env).wait()
     if code != 0:
         raise BuildFailed(' '.join(cmd) + ' returned ' + str(code) + ' exit status')
@@ -197,6 +198,13 @@ class Build:
         new_watching = list(self.watchdirs) + list(also)
         next = augment(self, 'watchdirs', new_watching)
         return next
+    
+    def print_cache(self):
+        for command in self.cache:
+            entry = self.cache[command]
+            print(entry.command)
+            for f, sha1 in entry.file_sha1s:
+                print('   ' + str(f) + '(' + str(sha1)[:5] + ')')
     
 class CacheEntry:
     def __init__(self, command, result, touched_paths):
