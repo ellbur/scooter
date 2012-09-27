@@ -1,18 +1,18 @@
 
 from scooter import *
 
-def compile_gcc(build, src, obj, opts):
-    return build.watching([src.dir]).easyrun('gcc', '-c', '-o', obj, opts, src)
+def compile_gcc(build, src, obj, opts, cc='gcc'):
+    return build.watching([src.dir]).easyrun(cc, '-c', '-o', obj, opts, src)
 
-def link_gcc(build, objs, bin, opts):
-    return build.watching(set(_.dir for _ in objs)).easyrun('gcc', '-o', bin, opts, objs)
+def link_gcc(build, objs, bin, opts, ld='gcc'):
+    return build.watching(set(_.dir for _ in objs)).easyrun(ld, '-o', bin, opts, objs)
 
-def build_gcc(build, sources, bin, opts):
+def build_gcc(build, sources, bin, opts, gcc='gcc'):
     objects = [ ]
     for s in sources:
-        obj = mkobj(s, '.o')
+        obj = build.mkobj(s, '.o')
         objects.append(obj)
-        compile_gcc(build, s, obj, opts)
+        compile_gcc(build, s, obj, opts, cc=gcc)
             
-    link_gcc(build, objects, bin, opts)
+    link_gcc(build, objects, bin, opts, ld=gcc)
 

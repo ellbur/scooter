@@ -5,6 +5,6 @@ setup(
     name       = 'scooter',
     version    = '0.123',
     packages   = ['scooter'],
-    py_modules = ['scooter.gcc', 'scooter.llvm']
+    py_modules = ['scooter.gcc', 'scooter.llvm', 'scooter.cl6x']
 )
 

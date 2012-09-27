@@ -1,4 +1,5 @@
 
+from __future__ import print_function
 from collections import namedtuple as nt
 import os
 import sys
@@ -58,13 +59,14 @@ def augment(the_obj, the_name, the_field):
                 return setattr(the_obj, name, next)
     return Augmented()
     
+# Tn =(.aZi =(.≤3∨øẋ, =(.aZe
 class Path(nt('Path', ['path'])):
-    def __repr__(self): return self.path
+    def __repr__(self): return './' + self.path
     def __div__(self, next):
         return p(str(self) + '/' + str(next))
     @property
     def exists(self): return os.path.exists(str(self))
-    def against(self, where): return os.path.relpath(str(self), str(where))
+    def against(self, where): return './' + os.path.relpath(str(self), str(where))
     def replant(self, src, dst): return p(dst) / self.against(src)
     def indir(self, dst): return self.replant(self.dir, dst)
     def chext(self, old, new):
@@ -73,6 +75,8 @@ class Path(nt('Path', ['path'])):
     def setext(self, new):
         prefix = re.sub(r'\.[^\.]*$', '', self.path)
         return p(prefix + new)
+    @property
+    def name(self): return os.path.split(os.path.realpath(str(self)))[1]
     @property
     def dir(self):
         if os.path.isdir(str(self)): return self
@@ -97,6 +101,7 @@ class Path(nt('Path', ['path'])):
             return PTuple(dirs)
         else:
             return PTuple(p(_) for _ in glob(str(self) + '/' + pat))
+    def rm(self): os.unlink(str(self))
 
 def p(s):
     if isinstance(s, Path): return s
@@ -116,22 +121,25 @@ def abbrev(cmd):
 
 class Wild: pass
 
-def clean(cmd):
+def clean(cmd, wd=None, first=True):
     cleaned = []
     for c in cmd:
         if isinstance(c, Path):
             c.make_parents()
         
-        if isinstance(c, list) or isinstance(c, tuple):
-            cleaned.extend(clean(c))
+        if isinstance(c, Path):
+            if wd != None:
+                cleaned.append(c.against(wd))
+            else:
+                cleaned.append(str(c))
+        elif isinstance(c, list) or isinstance(c, tuple):
+            cleaned.extend(clean(c, wd=wd, first=first))
         else:
             cleaned.append(str(c))
+        
+        first = False
+        
     return t(cleaned)
-
-def main_file(file):
-    global here
-    here = p(os.path.dirname(os.path.realpath(file)))
-    return here
 
 class Command(nt('Command', ['func', 'args', 'kwargs'])):
     def __call__(self):
@@ -141,17 +149,51 @@ class Command(nt('Command', ['func', 'args', 'kwargs'])):
     def is_up2date(self):
         return True
     
-def run(cmd, echo=True, verbose=False, env={}):
+def easyrun(*cmd, **kwargs):
+    wd = kwargs.get('wd', None)
+    return run(clean(cmd, wd), **kwargs)
+    
+def spy(hl, into=sys.stdout):
+    from fcntl import fcntl, F_GETFL, F_SETFL
+    from select import select
+    import os, sys
+
+    flags = fcntl(hl, F_GETFL)
+    fcntl(hl, F_SETFL, flags | os.O_NONBLOCK)
+
+    all = ''
+
+    while True:
+        select([hl], [], [])
+        data = hl.read()
+        if len(data) == 0: break
+        into.write(data)
+        into.flush()
+        all = all + data
+    
+    return all
+
+stream = spy
+    
+def run(cmd, echo=True, verbose=False, env={}, into=None, wd=None, wait=True):
     full_env = dict(os.environ)
     for k in env: full_env[k] = env[k]
     if echo and not verbose:
-        print('\033[34m' + abbrev(cmd) + '\033[0m') # ]]
+        print('\033[34m' + abbrev(cmd) + '\033[0m', file=sys.stderr) # ]]
     elif echo:
-        print('\033[34m' + str(cmd) + '\033[0m') # ]]
+        print('\033[34m' + str(cmd) + ' (in ' + str(wd) + ')' + '\033[0m', file=sys.stderr) # ]]
     sys.stdout.flush()
-    code = Popen(map(str, cmd), env=full_env).wait()
-    if code != 0:
-        raise BuildFailed(' '.join(cmd) + ' returned ' + str(code) + ' exit status')
+    sink = open(str(into), 'w') if into!=None else None
+    cwd = str(wd) if wd != None else None
+    proc = Popen(map(str, cmd), env=full_env, stdout=sink, cwd=cwd)
+    if wait:
+        code = proc.wait()
+        if sink != None: sink.close()
+        if code != 0:
+            raise BuildFailed(' '.join(cmd) + ' returned ' + str(code) + ' exit status')
+        return code
+    else:
+        return None
     
 class Build:
     def __init__(self, watchdirs, verbose=False, cache_size=1000):
@@ -166,22 +208,28 @@ class Build:
     def __del__(self):
         self.save()
         
-    def run(self, cmd, echo=True, env={}):
-        return self.do_args(run, cmd, echo=echo, verbose=self.verbose, env=hashable_dict(env))
+    def run(self, cmd, echo=True, env={}, also_depends=(), wd=None, into=None, cache=True, verbose=False):
+        if into != None:
+            p(into).make_parents()
+        if cache:
+            return self.do_args(also_depends, run, cmd, echo=echo, verbose=self.verbose or verbose, env=hashable_dict(env), wd=wd, into=into)
+        else:
+            run(cmd, echo=echo, verbose=self.verbose, env=hashable_dict(env), wd=wd, into=into)
         
     def easyrun(self, *cmd, **kwargs):
-        return self.run(clean(cmd), **kwargs)
-
-    def do_args(self, func, *args, **kwargs):
-        return self.do_command(Command(func, tuple(args), tuple(sorted(kwargs.iteritems()))))
+        wd = kwargs.get('wd', None)
+        return self.run(clean(cmd, wd), **kwargs)
+    
+    def do_args(self, also_depends, func, *args, **kwargs):
+        return self.do_command(Command(func, tuple(args), tuple(sorted(kwargs.iteritems()))), also_depends)
         
-    def do_command(self, cmd):
+    def do_command(self, cmd, also_depends):
         if cmd.is_up2date and (cmd in self.cache):
             if self.cache[cmd].is_up2date:
                 self.cache[cmd].touch()
                 return self.cache[cmd].result
         res, acc = treewatcher.run_watching_files(cmd, map(str, self.watchdirs))
-        touched = t(acc.created) + t(acc.deleted) + t(acc.accessed) + t(acc.modified)
+        touched = t(acc.created) + t(acc.deleted) + t(acc.accessed) + t(acc.modified) + t(map(str, also_depends))
         self.cache[cmd] = CacheEntry(cmd, res, touched)
         if len(self.cache) > self.cache_size*2:
             self.prune_cache()
@@ -230,11 +278,14 @@ class CacheEntry:
 def file_sha1(path):
     if not os.path.exists(str(path)):
         return '0' * 40
+    elif os.path.isdir(str(path)):
+        return 'd' * 40
     else:
         return hashlib.sha1(open(str(path), 'r').read()).hexdigest()
         
 class BuildHere(Build):
-    def __init__(self, watchdirs=None, verbose=False, cache=None, cache_size=1000):
+    def __init__(self, here, watchdirs=None, verbose=False, cache=None, cache_size=1000):
+        self.here = here
         if watchdirs == None:
             watchdirs = [here]
         if cache == None:
@@ -251,20 +302,32 @@ class BuildHere(Build):
         
     def save(self):
         pickle.dump(self.cache, open(str(self.cachefile), 'w'))
+        
+    def mkobj(self, srcs, ext):
+        if isinstance(srcs, Path): srcs = [srcs]
+        assert all(isinstance(_, Path) for _ in srcs)
+        catted = ''.join(_.realpath for _ in srcs)
+        return self.here / '.objcache' / (hashlib.sha1(catted).hexdigest() + ext)
     
-def mkobj(srcs, ext):
-    if isinstance(srcs, Path): srcs = [srcs]
-    catted = ''
-    for _ in srcs: catted += _.realpath
-    return here / '.objcache' / (hashlib.sha1(catted).hexdigest() + ext)
-    
+def indent(str, amount):
+    return re.sub('^(?=.)', ' ' * amount, str, flags=re.MULTILINE)
+
 def do_build(op):
     try:
         op()
     except BuildFailed as bf:
-        print('\033[4m\033[1m\033[31mBuild failed:\033[0m ' + str(bf))
+        print()
+        print('\033[4m\033[1m\033[31mBuild failed:\033[0m ')
+        print()
+        print(indent(str(bf), 4))
+        print()
         sys.exit(1)
-
+    except KeyboardInterrupt:
+        print()
+        print('\033[4m\033[1m\033[31mInterrupted\033[0m ')
+        print()
+        sys.exit(1)
+    
 t = tuple
 def tt(*things): return tuple(things)
 
