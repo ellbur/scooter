@@ -1,3 +1,4 @@
+# encoding=utf-8
 
 from __future__ import print_function
 from collections import namedtuple as nt
@@ -5,7 +6,7 @@ import os
 import sys
 import shutil
 from glob import glob
-from subprocess import Popen
+from subprocess import Popen, PIPE
 import re
 import pickle
 import treewatcher
@@ -20,15 +21,6 @@ class hashable_dict(dict):
     def __eq__(self, other):
         return tuple(sorted(self.iteritems())) == tuple(sorted(other.iteritems()))
 
-class PList(list):
-    def __floordiv__(self, pat):
-        return self.flatmap(lambda _: _//pat)
-    def flatmap(self, func):
-        res = PList()
-        for _ in self:
-            res.extend(func(_))
-        return res
-    
 class PTuple(tuple):
     def __floordiv__(self, pat):
         return self.flatmap(lambda _: _//pat)
@@ -59,9 +51,17 @@ def augment(the_obj, the_name, the_field):
                 return setattr(the_obj, name, next)
     return Augmented()
     
-# Tn =(.aZi =(.≤3∨øẋ, =(.aZe
 class Path(nt('Path', ['path'])):
+    @staticmethod
+    def mktemp():
+        import tempfile
+        _, path = tempfile.mkstemp()
+        return p(path)
     def __repr__(self): return './' + self.path
+    @property
+    def realpath(self): return os.path.realpath(self.path)
+    def __truediv__(self, next):
+        return self.__div__(next)
     def __div__(self, next):
         return p(str(self) + '/' + str(next))
     @property
@@ -81,9 +81,11 @@ class Path(nt('Path', ['path'])):
     def dir(self):
         if os.path.isdir(str(self)): return self
         else: return p(os.path.split(os.path.realpath(str(self)))[0])
-    def make_parents(self):
+    def make_parents(self): self.dir.makedir()
+    def mkdir(self): return self.makedir()
+    def makedir(self):
         try:
-            os.makedirs(str(self.dir))
+            os.makedirs(str(self))
         except OSError as e:
             if e.errno != 17: raise e
     @property
@@ -101,12 +103,51 @@ class Path(nt('Path', ['path'])):
             return PTuple(dirs)
         else:
             return PTuple(p(_) for _ in glob(str(self) + '/' + pat))
+    def __mod__(self, how):
+        if isinstance(how, RAND):
+            import tempfile
+            self.makedir()
+            _, path = tempfile.mkstemp(dir=str(self), prefix=how.prefix, suffix=how.suffix)
+            return p(path)
+        elif isinstance(how, COUNTER):
+            candidates = (_ for _ in os.listdir(str(self)) if _.startswith(how.prefix))
+            number_strs = (c[len(how.prefix):] for c in candidates)
+            numbers = [ ]
+            for s in number_strs:
+                try: numbers.append(int(s))
+                except ValueError: pass
+            now = max(numbers) + 1 if len(numbers)>0 else 1
+            return self/(how.prefix + str(now))
+        else:
+            raise TypeError(how, 'should be one of', [TMP, COUNTER])
+    
     def rm(self): os.unlink(str(self))
+    def set(self, wth):
+        self.make_parents()
+        open(str(self), 'w').write(wth)
+    def clear(self):
+        self.set('')
+    def setas(self, wth):
+        self.make_parents()
+        wth(open(str(self), 'w'))
+    def append(self, wth):
+        self.make_parents()
+        open(str(self), 'a').write(wth)
+    def open(self):
+        return open(str(self), 'r')
+    
+class COUNTER(nt('COUNTER', ['prefix'])): pass
+_RAND = nt('RAND', ['prefix', 'suffix'])
+class RAND(_RAND):
+    @staticmethod
+    def __new__(_cls, prefix='', suffix=''):
+        return _RAND.__new__(_cls, prefix, suffix)
 
 def p(s):
     if isinstance(s, Path): return s
     elif isinstance(s, basestring): return Path(os.path.normpath(os.path.relpath(s)))
     else: raise TypeError
+_p = p
 
 class BuildFailed(Exception):
     def __init__(self, msg):
@@ -152,7 +193,7 @@ class Command(nt('Command', ['func', 'args', 'kwargs'])):
 def easyrun(*cmd, **kwargs):
     wd = kwargs.get('wd', None)
     return run(clean(cmd, wd), **kwargs)
-    
+
 def spy(hl, into=sys.stdout):
     from fcntl import fcntl, F_GETFL, F_SETFL
     from select import select
@@ -174,8 +215,8 @@ def spy(hl, into=sys.stdout):
     return all
 
 stream = spy
-    
-def run(cmd, echo=True, verbose=False, env={}, into=None, wd=None, wait=True):
+
+def run(cmd, echo=True, verbose=False, env={}, into=None, wd=None, wait=True, capture=False, stderr=None):
     full_env = dict(os.environ)
     for k in env: full_env[k] = env[k]
     if echo and not verbose:
@@ -183,15 +224,23 @@ def run(cmd, echo=True, verbose=False, env={}, into=None, wd=None, wait=True):
     elif echo:
         print('\033[34m' + str(cmd) + ' (in ' + str(wd) + ')' + '\033[0m', file=sys.stderr) # ]]
     sys.stdout.flush()
-    sink = open(str(into), 'w') if into!=None else None
+    if capture:
+        sink = PIPE
+    else:
+        sink = open(str(into), 'w') if into!=None else None
     cwd = str(wd) if wd != None else None
-    proc = Popen(map(str, cmd), env=full_env, stdout=sink, cwd=cwd)
+    if isinstance(stderr, basestring):
+        stderr = open(stderr, 'w')
+    proc = Popen(map(str, cmd), env=full_env, stdout=sink, stderr=stderr, cwd=cwd)
     if wait:
         code = proc.wait()
-        if sink != None: sink.close()
+        if into != None: sink.close()
         if code != 0:
             raise BuildFailed(' '.join(cmd) + ' returned ' + str(code) + ' exit status')
-        return code
+        if capture:
+            return proc.communicate()[0]
+        else:
+            return None
     else:
         return None
     
@@ -282,7 +331,7 @@ def file_sha1(path):
         return 'd' * 40
     else:
         return hashlib.sha1(open(str(path), 'r').read()).hexdigest()
-        
+    
 class BuildHere(Build):
     def __init__(self, here, watchdirs=None, verbose=False, cache=None, cache_size=1000):
         self.here = here
@@ -312,22 +361,56 @@ class BuildHere(Build):
 def indent(str, amount):
     return re.sub('^(?=.)', ' ' * amount, str, flags=re.MULTILINE)
 
+def sink_to_temp(content, key='', **opts):
+    import tempfile
+    import atexit
+    path = p(tempfile.gettempdir()) / hashlib.sha1(key).hexdigest()
+    atexit.register(lambda: os.unlink(str(path)))
+    open(str(path), 'w').write(content)
+    return p(path)
+    
 def do_build(op):
     try:
         op()
     except BuildFailed as bf:
         print()
-        print('\033[4m\033[1m\033[31mBuild failed:\033[0m ')
+        print('\033[4m\033[1m\033[31mBuild failed:\033[0m ') # ]]]]
         print()
         print(indent(str(bf), 4))
         print()
         sys.exit(1)
     except KeyboardInterrupt:
         print()
-        print('\033[4m\033[1m\033[31mInterrupted\033[0m ')
+        print('\033[4m\033[1m\033[31mInterrupted\033[0m ') # ]]]]
         print()
         sys.exit(1)
     
 t = tuple
 def tt(*things): return tuple(things)
 
+def adict(**things):
+    return things
+    
+def struct(**things):
+    return nt('Struct', things.keys())(**things)
+    
+def nstruct(name):
+    return struct(
+        of = lambda **things: nt(name, things.keys())(**things)
+    )
+    
+def on_new_thread(func):
+    from threading import Thread
+    th = Thread(None, func)
+    th.start()
+    return th
+
+def edit(initial_text):
+    path = Path.mktemp()
+    editor = os.getenv('EDITOR')
+    if editor == None:
+        editor = 'nano'
+    open(str(path), 'w').write(initial_text)
+    Popen([editor, str(path)]).wait()
+    return open(str(path)).read()
+    

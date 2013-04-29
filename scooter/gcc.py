@@ -16,3 +16,8 @@ def build_gcc(build, sources, bin, opts, gcc='gcc'):
             
     link_gcc(build, objects, bin, opts, ld=gcc)
 
+def run_gcc(build, sources, opts, gcc='gcc', into=None):
+    bin = build.mkobj(sources, '')
+    build_gcc(build, sources, bin, opts, gcc=gcc)
+    easyrun(bin, into=into)
+
