@@ -138,6 +138,14 @@ class Path(nt('Path', ['path'])):
         open(str(self), 'a').write(wth)
     def open(self):
         return open(str(self), 'r')
+    def cp(self, dest):
+        dest = p(dest)
+        if dest.isdir:
+            dest = dest / self.name
+        if self.isdir:
+            shutil.copytree(str(self), str(dest))
+        else:
+            shutil.copy2(str(self), str(dest))
     
 class COUNTER(nt('COUNTER', ['prefix'])): pass
 _RAND = nt('RAND', ['prefix', 'suffix'])
