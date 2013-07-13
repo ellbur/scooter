@@ -340,6 +340,8 @@ def file_sha1(path):
         return '0' * 40
     elif os.path.isdir(str(path)):
         return 'd' * 40
+    elif os.stat(path).st_size > 500e6:
+        return 'b' * 40
     else:
         return hashlib.sha1(open(str(path), 'r').read()).hexdigest()
     
