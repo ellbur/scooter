@@ -347,6 +347,7 @@ def file_sha1(path):
     
 class BuildHere(Build):
     def __init__(self, here, watchdirs=None, verbose=False, cache=None, cache_size=1000):
+        here = p(here).dir
         self.here = here
         if watchdirs == None:
             watchdirs = [here]
