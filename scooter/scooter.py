@@ -70,6 +70,8 @@ class Path(nt('Path', ['path'])):
     def against(self, where): return './' + os.path.relpath(str(self), str(where))
     def replant(self, src, dst): return p(dst) / self.against(src)
     def indir(self, dst): return self.replant(self.dir, dst)
+    @property
+    def isdir(self): return os.path.isdir(str(self))
     def chext(self, old, new):
         assert self.path.endswith(old)
         return p(seld.path[:-len(old)] + new)
