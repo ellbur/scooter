@@ -13,6 +13,7 @@ import treewatcher
 import time
 import hashlib
 import types
+from quickstructures import *
 
 # http://stackoverflow.com/questions/1151658/python-hashable-dicts
 class hashable_dict(dict):
@@ -384,21 +385,12 @@ def do_build(op):
         print('\033[4m\033[1m\033[31mInterrupted\033[0m ') # ]]]]
         print()
         sys.exit(1)
+
+build = do_build
     
 t = tuple
 def tt(*things): return tuple(things)
 
-def adict(**things):
-    return things
-    
-def struct(**things):
-    return nt('Struct', things.keys())(**things)
-    
-def nstruct(name):
-    return struct(
-        of = lambda **things: nt(name, things.keys())(**things)
-    )
-    
 def on_new_thread(func):
     from threading import Thread
     th = Thread(None, func)
