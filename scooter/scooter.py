@@ -76,7 +76,7 @@ class Path(nt('Path', ['path'])):
         assert self.path.endswith(old)
         return p(seld.path[:-len(old)] + new)
     def setext(self, new):
-        prefix = re.sub(r'\.[^\.]*$', '', self.path)
+        prefix = re.sub(r'\.[^\.\/]*$', '', self.path)
         return p(prefix + new)
     @property
     def name(self): return os.path.split(os.path.realpath(str(self)))[1]
