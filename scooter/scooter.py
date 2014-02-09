@@ -279,4 +279,10 @@ def edit(initial_text):
     open(str(path), 'w').write(initial_text)
     Popen([editor, str(path)]).wait()
     return open(str(path)).read()
-    
+
+def charstream(hl):
+    while True:
+        c = hl.read(1)
+        if not c: break
+        yield c
+
