@@ -14,7 +14,7 @@ def build_gcc(build, sources, bin, opts, gcc='gcc', extra_objects=()):
         objects.append(obj)
         compile_gcc(build, s, obj, opts, cc=gcc)
             
-    link_gcc(build, objects + list(extra_objects), bin, opts, ld=gcc)
+    link_gcc(build, objects + list(map(p, extra_objects)), bin, opts, ld=gcc)
 
 def run_gcc(build, sources, opts, gcc='gcc', into=None):
     bin = build.mkobj(sources, '')
