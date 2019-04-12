@@ -8,14 +8,22 @@ import shutil
 from glob import glob
 from subprocess import Popen, PIPE
 import re
-import pickle
+import cPickle
 import treewatcher
 import time
 import hashlib
 import types
 from quickstructures import *
 from quickfiles import *
-from easyrun import *
+from ellbureasyrun import *
+import traceback
+from exceptions import BaseException
+from fcntl import fcntl, F_GETFL, F_SETFL
+from select import select
+import os, sys
+import tempfile
+import atexit
+from threading import Thread
 
 # http://stackoverflow.com/questions/1151658/python-hashable-dicts
 class hashable_dict(dict):
@@ -65,15 +73,7 @@ class Command(nt('Command', ['func', 'args', 'kwargs'])):
     def __call__(self):
         return self.func(*self.args, **dict(self.kwargs))
     
-    @property
-    def is_up2date(self):
-        return True
-    
 def spy(hl, into=sys.stdout):
-    from fcntl import fcntl, F_GETFL, F_SETFL
-    from select import select
-    import os, sys
-
     flags = fcntl(hl, F_GETFL)
     fcntl(hl, F_SETFL, flags | os.O_NONBLOCK)
 
@@ -91,13 +91,25 @@ def spy(hl, into=sys.stdout):
 
 stream = spy
 
-def run(cmd, echo=True, verbose=False, env={}, into=None, wd=None, wait=True, capture=False, stderr=None):
+def run(cmd, echo=True, verbose=False, env={}, into=None, wd=None, wait=True, capture=False, stderr=None, objcache=None):
+    cmd = tuple(cmd)
+    sinks = [ ]
+    cmd_no_sinks = [ ]
+    for token, i in zip(cmd, range(len(cmd))):
+        if isinstance(token, SINK):
+            seed = ' '.join(map(str, cmd + (str(i),)))
+            objcache.mkdirs()
+            sink_file = objcache / (hashlib.sha1(seed).hexdigest() + token.extension)
+            sinks.append(sink_file)
+            cmd_no_sinks.append(sink_file)
+        else:
+            cmd_no_sinks.append(token)
     full_env = dict(os.environ)
     for k in env: full_env[k] = env[k]
     if echo and not verbose:
-        print('\033[34m' + abbrev(cmd) + '\033[0m', file=sys.stderr) # ]]
+        print('\033[34m' + abbrev(cmd_no_sinks) + '\033[0m', file=sys.stderr) # ]]
     elif echo:
-        print('\033[34m' + str(cmd) + ' (in ' + str(wd) + ')' + '\033[0m', file=sys.stderr) # ]]
+        print('\033[34m' + str(cmd_no_sinks) + ' (in ' + str(wd) + ')' + '\033[0m', file=sys.stderr) # ]]
     sys.stdout.flush()
     if capture:
         sink = PIPE
@@ -106,37 +118,46 @@ def run(cmd, echo=True, verbose=False, env={}, into=None, wd=None, wait=True, ca
     cwd = str(wd) if wd != None else None
     if isinstance(stderr, basestring):
         stderr = open(stderr, 'w')
-    proc = Popen(map(str, cmd), env=full_env, stdout=sink, stderr=stderr, cwd=cwd)
-    if wait:
+    proc = Popen(map(str, cmd_no_sinks), env=full_env, stdout=sink, stderr=stderr, cwd=cwd)
+    if wait or len(sinks) > 0:
         code = proc.wait()
         if into != None: sink.close()
         if code != 0:
-            raise BuildFailed(' '.join(cmd) + ' returned ' + str(code) + ' exit status')
+            raise BuildFailed(' '.join(cmd_no_sinks) + ' returned ' + str(code) + ' exit status')
         if capture:
             return proc.communicate()[0]
+        elif len(sinks) > 0:
+            return tuple(sinks)
         else:
             return None
     else:
         return None
     
 class Build:
-    def __init__(self, watchdirs, verbose=False, cache_size=1000):
+    def __init__(self, watchdirs, objcache, verbose=False, cache_size=1000, show_why_rerun=False):
         self.watchdirs = watchdirs
+        self.objcache = objcache
         self.cache = { }
         self.cache_size = 1000
+        self.cache_changed = False
         self.verbose = verbose
+        self.show_why_rerun = show_why_rerun
         
     def save(self):
         raise NotImplementedError
     
     def __del__(self):
-        self.save()
+        try:
+            self.save()
+        except:
+            traceback.print_exc()
+            raise
         
     def run(self, cmd, echo=True, env={}, also_depends=(), wd=None, into=None, cache=True, verbose=False):
         if into != None:
             p(into).make_parents()
         if cache:
-            return self.do_args(also_depends, run, cmd, echo=echo, verbose=self.verbose or verbose, env=hashable_dict(env), wd=wd, into=into)
+            return self.do_args(also_depends, run, cmd, echo=echo, verbose=self.verbose or verbose, env=hashable_dict(env), wd=wd, into=into, objcache=self.objcache)
         else:
             run(cmd, echo=echo, verbose=self.verbose, env=hashable_dict(env), wd=wd, into=into)
         
@@ -147,14 +168,31 @@ class Build:
     def do_args(self, also_depends, func, *args, **kwargs):
         return self.do_command(Command(func, tuple(args), tuple(sorted(kwargs.iteritems()))), also_depends)
         
+    def do_command_with_explicit_dependencies(self, key, runner):
+        if key in self.cache:
+            if self.cache[key].is_up2date(show_why_rerun=self.show_why_rerun):
+                return self.cache[key].result
+        else:
+            if self.show_why_rerun:
+                print('Re-running because not in cache')
+        res, dependencies = runner()
+        self.cache[key] = CacheEntry(cmd, res, dependencies)
+        self.cache_changed = True
+        if len(self.cache) > self.cache_size*2:
+            self.prune_cache()
+        return res
+        
     def do_command(self, cmd, also_depends):
-        if cmd.is_up2date and (cmd in self.cache):
-            if self.cache[cmd].is_up2date:
-                self.cache[cmd].touch()
+        if cmd in self.cache:
+            if self.cache[cmd].is_up2date(show_why_rerun=self.show_why_rerun):
                 return self.cache[cmd].result
+        else:
+            if self.show_why_rerun:
+                print('Re-running because not in cache')
         res, acc = treewatcher.run_watching_files(cmd, map(str, self.watchdirs))
         touched = t(acc.created) + t(acc.deleted) + t(acc.accessed) + t(acc.modified) + t(map(str, also_depends))
         self.cache[cmd] = CacheEntry(cmd, res, touched)
+        self.cache_changed = True
         if len(self.cache) > self.cache_size*2:
             self.prune_cache()
         return res
@@ -182,22 +220,48 @@ class CacheEntry:
     def __init__(self, command, result, touched_paths):
         self.command    = command
         self.result     = result
-        self.file_sha1s = [
-            (_, file_sha1(_)) for _ in touched_paths
+        self.file_fingerprints = [
+            (_, file_fingerprint(_)) for _ in touched_paths
         ]
-        self.timestamp  = time.time()
         
-    def touch(self):
-        self.timestamp = time.time()
+    def is_up2date(self, show_why_rerun=False):
+        good = True
+        for file, old_fingerprint in self.file_fingerprints:
+            if not is_fingerprint_up2date(file, old_fingerprint):
+                if show_why_rerun:
+                    print('Re-running because %s has changed' % (file,))
+                return False
+        else:
+            return True
     
-    def age(self):
-        return time.time() - self.timestamp
+def file_fingerprint(path):
+    if not os.path.exists(str(path)):
+        return (0, '0' * 40)
+    else:
+        s = os.stat(path)
+        if os.path.isdir(str(path)):
+            return (0, 'd' * 40)
+        elif s.st_size > 500e6:
+            return (s.st_mtime, 'b' * 40)
+        else:
+            return (s.st_mtime, hashlib.sha1(open(str(path), 'r').read()).hexdigest())
     
-    @property
-    def is_up2date(self):
-        return all(
-            file_sha1(_) == old_sha1 for _, old_sha1 in self.file_sha1s
-        )
+def is_fingerprint_up2date(path, fingerprint):
+    mtime, sha1 = fingerprint
+    
+    if not os.path.exists(str(path)):
+        return fingerprint == (0, '0' * 40)
+    else:
+        s = os.stat(path)
+        if os.path.isdir(str(path)):
+            return fingerprint == (0, 'd' * 40)
+        elif s.st_size > 500e6:
+            return fingerprint == (s.st_mtime, 'b' * 40)
+        else:
+            if s.st_mtime != mtime:
+                return fingerprint[1] == hashlib.sha1(open(str(path), 'r').read()).hexdigest()
+            else:
+                return True
     
 def file_sha1(path):
     if not os.path.exists(str(path)):
@@ -210,7 +274,7 @@ def file_sha1(path):
         return hashlib.sha1(open(str(path), 'r').read()).hexdigest()
     
 class BuildHere(Build):
-    def __init__(self, here, watchdirs=None, verbose=False, cache=None, cache_size=1000):
+    def __init__(self, here, watchdirs=None, verbose=False, cache=None, cache_size=1000, show_why_rerun=False):
         here = p(here).dir
         self.here = here
         if watchdirs == None:
@@ -218,19 +282,28 @@ class BuildHere(Build):
         if cache == None:
             cache = here / '.buildcache'
         self.cachefile = cache
-        Build.__init__(self, watchdirs, verbose, cache_size)
+        Build.__init__(self, watchdirs, here/'.objcache', verbose, cache_size, show_why_rerun)
         try:
-            self.cache = pickle.load(open(str(self.cachefile), 'r'))
-        except IOError as e:
-            if e.errno == 2:
-                pass
-            else:
-                raise e
+            try:
+                self.cache = cPickle.load(open(str(self.cachefile), 'r'))
+            except IOError as e:
+                if e.errno == 2:
+                    self.cache = { }
+                    pass
+                else:
+                    raise e
+        except:
+            print('Loading build cache failed. Will start with empty cache.')
+            self.cache = { }
         
     def save(self):
-        pickle.dump(self.cache, open(str(self.cachefile), 'w'))
+        if self.cache_changed:
+            self.cache_changed = False
+            with open(str(self.cachefile), 'w') as sink:
+                cPickle.dump(self.cache, sink)
         
     def mkobj(self, srcs, ext):
+        if isinstance(srcs, str): srcs = p(srcs)
         if isinstance(srcs, Path): srcs = [srcs]
         assert all(isinstance(_, Path) for _ in srcs)
         catted = ''.join(_.realpath for _ in srcs)
@@ -240,8 +313,6 @@ def indent(str, amount):
     return re.sub('^(?=.)', ' ' * amount, str, flags=re.MULTILINE)
 
 def sink_to_temp(content, key='', **opts):
-    import tempfile
-    import atexit
     path = p(tempfile.gettempdir()) / hashlib.sha1(key).hexdigest()
     atexit.register(lambda: os.unlink(str(path)))
     open(str(path), 'w').write(content)
@@ -249,7 +320,10 @@ def sink_to_temp(content, key='', **opts):
     
 def do_build(op):
     try:
-        op()
+        try:
+            op()
+        except RunFailed as rf:
+            raise BuildFailed(str(rf))
     except BuildFailed as bf:
         print()
         print('\033[4m\033[1m\033[31mBuild failed:\033[0m ') # ]]]]
@@ -266,7 +340,6 @@ def do_build(op):
 build = do_build
     
 def on_new_thread(func):
-    from threading import Thread
     th = Thread(None, func)
     th.start()
     return th
