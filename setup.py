@@ -4,14 +4,14 @@ from setuptools import setup
 
 setup(
     name       = 'scooter',
-    version    = '2.4',
+    version    = '2.7',
     packages   = ['scooter'],
-    py_modules = ['scooter.gcc', 'scooter.llvm'],
-    # http://stackoverflow.com/questions/12372336/how-do-i-make-pip-respect-requirements
+    py_modules = ['scooter.gcc', 'scooter.llvm', 'scooter.build_script', 'scooter.remote_vs'],
     install_requires = [
         'quickfiles',
         'quickstructures',
         'ellbur-easyrun',
+        'treewatcher'
     ]
 )
 
