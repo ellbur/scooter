@@ -1,6 +1,9 @@
 
 from scooter import *
 
+if sys.version_info >= (3, 0):
+    unicode = str
+
 def compile_gcc(build, src, obj, opts, include_dirs=(), system_include_dirs=(), cc='gcc'):
     return build.watching([src.dir] + [_ for _ in map(p, list(include_dirs)) if _.exists] + [_ for _ in map(p, list(system_include_dirs)) if _.exists]).easyrun(cc, '-c', '-o', obj, (opts, t(('-I', d) for d in include_dirs), t(('-isystem', d) for d in system_include_dirs)), src)
 

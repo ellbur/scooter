@@ -1,5 +1,5 @@
 # encoding=utf-8
-
+                               
 from __future__ import print_function
 from collections import namedtuple as nt
 import os
@@ -8,7 +8,10 @@ import shutil
 from glob import glob
 from subprocess import Popen, PIPE
 import re
-import cPickle
+if sys.version_info >= (3, 0):
+    import _pickle as cPickle
+else:
+    import cPickle
 import treewatcher
 import time
 import hashlib
@@ -17,7 +20,6 @@ from quickstructures import *
 from quickfiles import *
 from ellbureasyrun import *
 import traceback
-from exceptions import BaseException
 from fcntl import fcntl, F_GETFL, F_SETFL
 from select import select
 import os, sys
@@ -25,12 +27,15 @@ import tempfile
 import atexit
 from threading import Thread
 
+if sys.version_info >= (3, 0):
+    basestring = str
+
 # http://stackoverflow.com/questions/1151658/python-hashable-dicts
 class hashable_dict(dict):
     def __hash__(self):
-        return hash(tuple(sorted(self.iteritems())))
+        return hash(tuple(sorted(iter(self.items()))))
     def __eq__(self, other):
-        return tuple(sorted(self.iteritems())) == tuple(sorted(other.iteritems()))
+        return tuple(sorted(iter(self.items()))) == tuple(sorted(iter(other.items())))
 
 class PTuple(tuple):
     def __floordiv__(self, pat):
@@ -51,7 +56,7 @@ def augment(the_obj, the_name, the_field):
                 # This is where I think python made a mistake. Method binding should be done
                 # at `.` time.
                 if isinstance(attr, types.MethodType):
-                    return types.MethodType(attr.im_func, self, type(self))
+                    return types.MethodType(attr.__func__, self)
                 else:
                     return attr
             
@@ -99,7 +104,7 @@ def run(cmd, echo=True, verbose=False, env={}, into=None, wd=None, wait=True, ca
         if isinstance(token, SINK):
             seed = ' '.join(map(str, cmd + (str(i),)))
             objcache.mkdirs()
-            sink_file = objcache / (hashlib.sha1(seed).hexdigest() + token.extension)
+            sink_file = objcache / (hashlib.sha1(seed.encode('utf-8')).hexdigest() + token.extension)
             sinks.append(sink_file)
             cmd_no_sinks.append(sink_file)
         else:
@@ -114,10 +119,10 @@ def run(cmd, echo=True, verbose=False, env={}, into=None, wd=None, wait=True, ca
     if capture:
         sink = PIPE
     else:
-        sink = open(str(into), 'w') if into!=None else None
+        sink = open(str(into), 'wb') if into!=None else None
     cwd = str(wd) if wd != None else None
     if isinstance(stderr, basestring):
-        stderr = open(stderr, 'w')
+        stderr = open(stderr, 'wb')
     proc = Popen(map(str, cmd_no_sinks), env=full_env, stdout=sink, stderr=stderr, cwd=cwd)
     if wait or len(sinks) > 0:
         code = proc.wait()
@@ -166,7 +171,7 @@ class Build:
         return self.run(clean(cmd, wd), **kwargs)
     
     def do_args(self, also_depends, func, *args, **kwargs):
-        return self.do_command(Command(func, tuple(args), tuple(sorted(kwargs.iteritems()))), also_depends)
+        return self.do_command(Command(func, tuple(args), tuple(sorted(iter(kwargs.items())))), also_depends)
         
     def do_command_with_explicit_dependencies(self, key, runner):
         if key in self.cache:
@@ -244,7 +249,7 @@ def file_fingerprint(path):
         elif s.st_size > 500e6:
             return (s.st_mtime, 'b' * 40)
         else:
-            return (s.st_mtime, hashlib.sha1(open(str(path), 'r').read()).hexdigest())
+            return (s.st_mtime, hashlib.sha1(open(str(path), 'rb').read()).hexdigest())
     
 def is_fingerprint_up2date(path, fingerprint):
     mtime, sha1 = fingerprint
@@ -259,7 +264,7 @@ def is_fingerprint_up2date(path, fingerprint):
             return fingerprint == (s.st_mtime, 'b' * 40)
         else:
             if s.st_mtime != mtime:
-                return fingerprint[1] == hashlib.sha1(open(str(path), 'r').read()).hexdigest()
+                return fingerprint[1] == hashlib.sha1(open(str(path), 'rb').read()).hexdigest()
             else:
                 return True
     
@@ -271,7 +276,7 @@ def file_sha1(path):
     elif os.stat(path).st_size > 500e6:
         return 'b' * 40
     else:
-        return hashlib.sha1(open(str(path), 'r').read()).hexdigest()
+        return hashlib.sha1(open(str(path), 'rb').read()).hexdigest()
     
 class BuildHere(Build):
     def __init__(self, here, watchdirs=None, verbose=False, cache=None, cache_size=1000, show_why_rerun=False):
@@ -285,7 +290,7 @@ class BuildHere(Build):
         Build.__init__(self, watchdirs, here/'.objcache', verbose, cache_size, show_why_rerun)
         try:
             try:
-                self.cache = cPickle.load(open(str(self.cachefile), 'r'))
+                self.cache = cPickle.load(open(str(self.cachefile), 'rb'))
             except IOError as e:
                 if e.errno == 2:
                     self.cache = { }
@@ -299,7 +304,7 @@ class BuildHere(Build):
     def save(self):
         if self.cache_changed:
             self.cache_changed = False
-            with open(str(self.cachefile), 'w') as sink:
+            with open(str(self.cachefile), 'wb') as sink:
                 cPickle.dump(self.cache, sink)
         
     def mkobj(self, srcs, ext):
@@ -315,7 +320,7 @@ def indent(str, amount):
 def sink_to_temp(content, key='', **opts):
     path = p(tempfile.gettempdir()) / hashlib.sha1(key).hexdigest()
     atexit.register(lambda: os.unlink(str(path)))
-    open(str(path), 'w').write(content)
+    open(str(path), 'wb').write(content)
     return p(path)
     
 def do_build(op):

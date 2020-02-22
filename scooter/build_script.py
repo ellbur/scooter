@@ -19,7 +19,7 @@ def build_main(here):
 
         positional_names = [
             main_function.__code__.co_varnames[i]
-                for i in xrange(1, main_function.__code__.co_argcount)
+                for i in range(1, main_function.__code__.co_argcount)
         ]
         
         for p in positional_names:
