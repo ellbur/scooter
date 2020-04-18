@@ -312,6 +312,7 @@ class BuildHere(Build):
         if isinstance(srcs, Path): srcs = [srcs]
         assert all(isinstance(_, Path) for _ in srcs)
         catted = ''.join(_.realpath for _ in srcs)
+        catted = catted.encode('utf-8')
         return self.here / '.objcache' / (hashlib.sha1(catted).hexdigest() + ext)
     
 def indent(str, amount):
