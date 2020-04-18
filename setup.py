@@ -4,7 +4,7 @@ from setuptools import setup
 
 setup(
     name       = 'scooter',
-    version    = '2.7',
+    version    = '2.8',
     packages   = ['scooter'],
     py_modules = ['scooter.gcc', 'scooter.llvm', 'scooter.build_script', 'scooter.remote_vs'],
     install_requires = [
