@@ -1,5 +1,7 @@
 
-from scooter import *
+from scooter import easyrun, SINK, PTuple, p, Path, t
+import sys
+from collections import namedtuple as nt
 
 if sys.version_info >= (3, 0):
     unicode = str
@@ -28,4 +30,19 @@ def run_gcc(build, sources, opts, gcc='gcc', into=None):
     bin = build.mkobj(sources, '')
     build_gcc(build, sources, bin, opts, gcc=gcc)
     easyrun(bin, into=into)
+    
+GCCRuleSet = nt('GCCRuleSet', ['compile_rules', 'link_rule'])
+GCCCompileRule = nt('GCCCompileRule', ['gcc', 'opts', 'c', 'o', 'includes'])
+GCCLinkRule = nt('GCCLinkRule', ['gcc', 'opts', 'objs', 'bin', 'libs'])
+
+def build_gcc_generating_rules(build, sources, bin, opts, gcc='gcc', extra_objects=(), libs=()):
+    if isinstance(extra_objects, str): extra_objects = (extra_objects,)
+    if isinstance(extra_objects, unicode): extra_objects = (extra_objects,)
+    if isinstance(extra_objects, Path): extra_objects = (extra_objects,)
+    
+    objects = [ ]
+    for s in sources:
+        objects.append(compile_gcc(build, s, SINK('.o'), opts, cc=gcc)[0])
+            
+    link_gcc(build, objects + list(map(p, extra_objects)), bin, opts, libs=libs, ld=gcc)
 
